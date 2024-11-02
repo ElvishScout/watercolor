@@ -58,7 +58,6 @@ function generateCanvas({
       } else {
         context.moveTo(x, y);
       }
-      console.log([x, y]);
     });
     context.closePath();
     context.fill();
