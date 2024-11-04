@@ -1,26 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { PaintingOptions, generateLayerList } from "./utils/painting";
 import { parseForm } from "./utils/form-parser";
-
-type LayerOptions = {
-  path: [number, number, number][];
-  baseRadius: number;
-  temperature: number;
-  iterations: number;
-};
-
-type PaintingOptions = LayerOptions & {
-  color: string;
-  alpha: number;
-  layers: number;
-  preIterations: number;
-};
 
 const distance = ([x1, y1]: [number, number], [x2, y2]: [number, number]) => {
   return Math.sqrt(Math.pow(x1 - x2, 2) + Math.pow(y1 - y2, 2));
-};
-
-const uniform = (centroid: number, radius: number) => {
-  return Math.random() * radius * 2 + centroid - radius;
 };
 
 const closePath = (path: [number, number][], minDistance: number) => {
@@ -40,26 +23,6 @@ const randomizePath = (path: [number, number][]) => {
   return path.map(([x, y]) => [x, y, Math.random()] as [number, number, number]);
 };
 
-const generateLayer = ({ path, baseRadius, temperature, iterations }: LayerOptions) => {
-  let currPath: [number, number, number][] = path;
-  for (let i = 0; i < iterations; i++) {
-    const nextPath: [number, number, number][] = [];
-    for (let j = 0; j < currPath.length; j++) {
-      const [x1, y1, r1] = currPath[(j || currPath.length) - 1];
-      const [x2, y2, r2] = currPath[j];
-      const rm = ((r1 + r2) * temperature) / 2;
-      const pm: [number, number, number] = [
-        uniform((x1 + x2) / 2, baseRadius * rm),
-        uniform((y1 + y2) / 2, baseRadius * rm),
-        rm,
-      ];
-      nextPath.push(pm, [x2, y2, r2]);
-    }
-    currPath = nextPath;
-  }
-  return currPath;
-};
-
 const initCanvas = (canvas: HTMLCanvasElement) => {
   const context = canvas.getContext("2d")!;
   context.fillStyle = "#ffffff";
@@ -69,9 +32,11 @@ const initCanvas = (canvas: HTMLCanvasElement) => {
   // context.globalCompositeOperation = "source-over";
 };
 
-const drawPainting = (
+const drawPainting = async (
   canvas: HTMLCanvasElement,
   {
+    width,
+    height,
     path,
     baseRadius,
     temperature,
@@ -83,34 +48,47 @@ const drawPainting = (
   }: PaintingOptions
 ) => {
   const context = canvas.getContext("2d")!;
-  context.fillStyle = color;
-  context.globalAlpha = alpha;
+  if (width > canvas.width || height > canvas.height) {
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    if (width > canvas.width) {
+      canvas.width = width;
+    }
+    if (height > canvas.height) {
+      canvas.height = height;
+    }
+    initCanvas(canvas);
+    context.putImageData(imageData, 0, 0);
+  }
 
-  const basePath = generateLayer({
+  const upperCanvas = document.createElement("canvas");
+  const upperContext = upperCanvas.getContext("2d")!;
+  upperCanvas.width = width;
+  upperCanvas.height = height;
+  upperContext.fillStyle = color;
+  upperContext.globalAlpha = alpha;
+
+  const layerList = generateLayerList({
     path,
     baseRadius,
     temperature,
-    iterations: preIterations,
+    iterations,
+    layers,
+    preIterations,
   });
-
-  for (let i = 0; i < layers; i++) {
-    context.beginPath();
-    const layerPath = generateLayer({
-      path: basePath,
-      baseRadius,
-      temperature,
-      iterations,
-    });
+  layerList.forEach((layerPath) => {
+    upperContext.beginPath();
     layerPath.forEach(([x, y], i) => {
       if (i) {
-        context.lineTo(x, y);
+        upperContext.lineTo(x, y);
       } else {
-        context.moveTo(x, y);
+        upperContext.moveTo(x, y);
       }
     });
-    context.closePath();
-    context.fill("evenodd");
-  }
+    upperContext.closePath();
+    upperContext.fill("evenodd");
+  });
+
+  context.drawImage(upperCanvas, 0, 0);
 };
 
 function FormField({
@@ -167,14 +145,20 @@ function App() {
 
   const minDistance = 16;
 
-  const [selectedColorIndex, setSelectedColorIndex] = useState(0);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  const [selectedColorIndex, setSelectedColorIndex] = useState(-1);
 
   const [resizeMouseDown, setResizeMouseDown] = useState(false);
-  const [width, setWidth] = useState(320);
-  const [height, setHeight] = useState(320);
+  const minWidth = 256;
+  const minHeight = 256;
+  const [width, setWidth] = useState(512);
+  const [height, setHeight] = useState(512);
 
   const [canvasMouseDown, setCanvasMouseDown] = useState(false);
   const [path, setPath] = useState<[number, number][]>([]);
+
+  const [pending, setPending] = useState(false);
 
   const pathStr = useMemo(() => {
     const d = path
@@ -185,7 +169,6 @@ function App() {
     return d && d + " Z";
   }, [path]);
 
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
     const canvas = canvasRef.current;
     if (canvas) {
@@ -230,8 +213,8 @@ function App() {
     if (baseRadius === undefined || baseRadius < 0) {
       errorMessages.push("Base radius must be a valid non-negative number.");
     }
-    if (temperature === undefined || temperature < 0) {
-      errorMessages.push("Temperature must be a valid non-negative number.");
+    if (temperature === undefined || temperature < 0 || temperature > 1) {
+      errorMessages.push("Temperature must be a valid number between 0 and 1.");
     }
 
     if (errorMessages.length) {
@@ -239,7 +222,9 @@ function App() {
       return;
     }
 
-    const options = {
+    const options: PaintingOptions = {
+      width,
+      height,
       path: randomizePath(path),
       layers,
       alpha,
@@ -250,8 +235,12 @@ function App() {
       color,
     } as PaintingOptions;
 
-    drawPainting(canvas, options);
-    setPath([]);
+    setPending(true);
+    setTimeout(() => {
+      drawPainting(canvas, options);
+      setPending(false);
+      setPath([]);
+    }, 0);
   };
 
   return (
@@ -260,6 +249,8 @@ function App() {
         <div className="w-full h-full">
           <div className="inline-block w-1/4 align-top">
             <form
+              className="select-none"
+              autoComplete="off"
               onSubmit={(ev) => {
                 ev.preventDefault();
                 onSubmit(ev.currentTarget);
@@ -308,6 +299,7 @@ function App() {
                     <input
                       className="absolute w-0 h-0"
                       type="color"
+                      defaultValue="#ff0000"
                       onBlur={(ev) => {
                         const inputColor = ev.currentTarget.value;
                         if (colors.indexOf(inputColor) === -1) {
@@ -315,10 +307,10 @@ function App() {
                         }
                       }}
                     />
-                    <span className="mx-1 text-blue-500 cursor-pointer select-none">Add</span>
+                    <span className="mx-1 text-blue-500 cursor-pointer">Add</span>
                   </label>
                   <span
-                    className="mx-1 text-red-500 cursor-pointer select-none"
+                    className="mx-1 text-red-500 cursor-pointer"
                     onClick={() => {
                       setColors(colors.filter((_, i) => i !== selectedColorIndex));
                     }}
@@ -356,19 +348,23 @@ function App() {
               <div className="mx-2 my-1">
                 <button
                   className="
-                    mx-1 py-0.5 w-16 rounded-md text-white
+                    mx-1 my-1 py-0.5 w-20 rounded-md text-white
                     bg-blue-500 hover:bg-blue-400 active:bg-blue-300
+                    disabled:bg-blue-300 disabled:cursor-not-allowed
                   "
                   type="submit"
+                  disabled={pending}
                 >
-                  Draw
+                  {pending ? <>Drawing</> : <>Draw</>}
                 </button>
                 <button
                   className="
-                    mx-1 py-0.5 w-16 rounded-md text-white
+                    mx-1 my-1 py-0.5 w-20 rounded-md text-white
                     bg-red-500 hover:bg-red-400 active:bg-red-300
+                    disabled:bg-red-300 disabled:cursor-not-allowed
                   "
                   type="button"
+                  disabled={pending}
                   onClick={() => {
                     const canvas = canvasRef.current;
                     if (canvas) {
@@ -378,55 +374,88 @@ function App() {
                 >
                   Clear
                 </button>
+                <button
+                  className="
+                    mx-1 my-1 py-0.5 w-20 rounded-md text-white
+                    bg-green-500 hover:bg-green-400 active:bg-green-300
+                    disabled:bg-green-300 disabled:cursor-not-allowed
+                  "
+                  type="button"
+                  disabled={pending}
+                  onClick={() => {
+                    const canvas = canvasRef.current;
+                    if (canvas) {
+                      const tempCanvas = document.createElement("canvas");
+                      const tempContext = tempCanvas.getContext("2d")!;
+                      tempCanvas.width = width;
+                      tempCanvas.height = height;
+                      tempContext.drawImage(canvas, 0, 0);
+
+                      const link = document.createElement("a");
+                      link.href = tempCanvas.toDataURL();
+                      link.download = `${Date.now()}.png`;
+                      link.click();
+                    }
+                  }}
+                >
+                  Save
+                </button>
               </div>
             </form>
           </div>
           <div className="inline-block w-3/4 align-top">
-            <div className="relative outline outline-black outline-2" style={{ width, height }}>
-              <canvas ref={canvasRef} className="absolute" width={width} height={height} />
-              <svg
-                className="absolute cursor-crosshair z-10"
-                width={width}
-                height={height}
-                onPointerDown={(ev) => {
-                  setCanvasMouseDown(true);
-                  ev.currentTarget.setPointerCapture(ev.pointerId);
-                  const rect = ev.currentTarget.getBoundingClientRect();
-                  const [x, y] = [ev.clientX - rect.left, ev.clientY - rect.top];
-                  setPath([[x, y]]);
-                }}
-                onPointerMove={(ev) => {
-                  if (canvasMouseDown) {
+            <div
+              className="relative outline outline-black outline-2"
+              style={{ width, height, pointerEvents: (pending || undefined) && "none" }}
+            >
+              <div className="relative w-full h-full overflow-hidden">
+                <canvas ref={canvasRef} className="absolute" />
+                <svg
+                  className="absolute cursor-crosshair z-10"
+                  width={width}
+                  height={height}
+                  onPointerDown={(ev) => {
+                    setCanvasMouseDown(true);
+                    ev.currentTarget.setPointerCapture(ev.pointerId);
                     const rect = ev.currentTarget.getBoundingClientRect();
                     const [x, y] = [ev.clientX - rect.left, ev.clientY - rect.top];
-                    const [xn, yn] = path[path.length - 1];
-                    if (!path.length || distance([x, y], [xn, yn]) > minDistance) {
-                      setPath([...path, [x, y]]);
+                    setPath([[x, y]]);
+                  }}
+                  onPointerMove={(ev) => {
+                    if (canvasMouseDown) {
+                      const rect = ev.currentTarget.getBoundingClientRect();
+                      const [x, y] = [ev.clientX - rect.left, ev.clientY - rect.top];
+                      const [xn, yn] = path[path.length - 1];
+                      if (!path.length || distance([x, y], [xn, yn]) > minDistance) {
+                        setPath([...path, [x, y]]);
+                      }
                     }
-                  }
-                }}
-                onPointerUp={(ev) => {
-                  setCanvasMouseDown(false);
-                  ev.currentTarget.releasePointerCapture(ev.pointerId);
-                  if (path.length < 2) {
-                    setPath([]);
-                    return;
-                  }
-                  setPath(closePath(path, minDistance));
-                }}
-              >
-                <path
-                  d={pathStr}
-                  stroke="#000000"
-                  strokeWidth={1}
-                  strokeDasharray="4 4"
-                  fill="none"
-                />
-              </svg>
+                  }}
+                  onPointerUp={(ev) => {
+                    setCanvasMouseDown(false);
+                    ev.currentTarget.releasePointerCapture(ev.pointerId);
+                    if (path.length < 2) {
+                      setPath([]);
+                      return;
+                    }
+                    setPath(closePath(path, minDistance));
+                  }}
+                >
+                  <path
+                    d={pathStr}
+                    stroke="#000000"
+                    strokeWidth={1}
+                    strokeDasharray="4 4"
+                    fill={colors[selectedColorIndex] || "none"}
+                    fillOpacity={0.2}
+                    fillRule="evenodd"
+                  />
+                </svg>
+              </div>
               <div
                 className="
-                  absolute w-4 h-4 -right-2 -bottom-2 border-2 bg-white
-                  border-black cursor-nwse-resize z-20
+                  absolute w-4 h-4 -right-2 -bottom-2 bg-white
+                  outline outline-2 -outline-offset-4 outline-black cursor-nwse-resize z-20
                 "
                 onPointerDown={(ev) => {
                   setResizeMouseDown(true);
@@ -436,8 +465,8 @@ function App() {
                   if (resizeMouseDown) {
                     const rect = ev.currentTarget.parentElement!.getBoundingClientRect();
                     const [x, y] = [ev.clientX - rect.left, ev.clientY - rect.top];
-                    setWidth(x);
-                    setHeight(y);
+                    setWidth(Math.max(x, minWidth));
+                    setHeight(Math.max(y, minHeight));
                   }
                 }}
                 onPointerUp={(ev) => {
