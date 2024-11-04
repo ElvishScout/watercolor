@@ -23,13 +23,11 @@ const randomizePath = (path: [number, number][]) => {
   return path.map(([x, y]) => [x, y, Math.random()] as [number, number, number]);
 };
 
-const initCanvas = (canvas: HTMLCanvasElement) => {
+const clearCanvas = (canvas: HTMLCanvasElement) => {
   const context = canvas.getContext("2d")!;
   context.fillStyle = "#ffffff";
   context.globalAlpha = 1;
-  context.clearRect(0, 0, canvas.width, canvas.height);
   context.fillRect(0, 0, canvas.width, canvas.height);
-  // context.globalCompositeOperation = "source-over";
 };
 
 const drawPainting = async (
@@ -56,7 +54,7 @@ const drawPainting = async (
     if (height > canvas.height) {
       canvas.height = height;
     }
-    initCanvas(canvas);
+    clearCanvas(canvas);
     context.putImageData(imageData, 0, 0);
   }
 
@@ -172,7 +170,7 @@ function App() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (canvas) {
-      initCanvas(canvas);
+      clearCanvas(canvas);
     }
   }, [canvasRef]);
 
@@ -368,7 +366,7 @@ function App() {
                   onClick={() => {
                     const canvas = canvasRef.current;
                     if (canvas) {
-                      initCanvas(canvas);
+                      clearCanvas(canvas);
                     }
                   }}
                 >
@@ -389,6 +387,7 @@ function App() {
                       const tempContext = tempCanvas.getContext("2d")!;
                       tempCanvas.width = width;
                       tempCanvas.height = height;
+                      clearCanvas(tempCanvas);
                       tempContext.drawImage(canvas, 0, 0);
 
                       const link = document.createElement("a");
@@ -405,7 +404,7 @@ function App() {
           </div>
           <div className="inline-block w-3/4 align-top">
             <div
-              className="relative outline outline-black outline-2"
+              className="relative outline outline-black outline-2 bg-white"
               style={{ width, height, pointerEvents: (pending || undefined) && "none" }}
             >
               <div className="relative w-full h-full overflow-hidden">
