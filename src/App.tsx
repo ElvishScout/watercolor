@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { parseForm } from "@focaui/parse-form";
 import { PaintingOptions, generateLayerList } from "./utils/painting";
-import { parseForm } from "./utils/form-parser";
 
 const distance = ([x1, y1]: [number, number], [x2, y2]: [number, number]) => {
   return Math.sqrt(Math.pow(x1 - x2, 2) + Math.pow(y1 - y2, 2));
@@ -65,28 +65,32 @@ const drawPainting = async (
   upperContext.fillStyle = color;
   upperContext.globalAlpha = alpha;
 
-  const layerList = generateLayerList({
-    path,
-    baseRadius,
-    temperature,
-    iterations,
-    layers,
-    preIterations,
+  return new Promise<void>((resolve) => {
+    setTimeout(() => {
+      const layerList = generateLayerList({
+        path,
+        baseRadius,
+        temperature,
+        iterations,
+        layers,
+        preIterations,
+      });
+      layerList.forEach((layerPath) => {
+        upperContext.beginPath();
+        layerPath.forEach(([x, y], i) => {
+          if (i) {
+            upperContext.lineTo(x, y);
+          } else {
+            upperContext.moveTo(x, y);
+          }
+        });
+        upperContext.closePath();
+        upperContext.fill("evenodd");
+      });
+      context.drawImage(upperCanvas, 0, 0);
+      resolve();
+    }, 0);
   });
-  layerList.forEach((layerPath) => {
-    upperContext.beginPath();
-    layerPath.forEach(([x, y], i) => {
-      if (i) {
-        upperContext.lineTo(x, y);
-      } else {
-        upperContext.moveTo(x, y);
-      }
-    });
-    upperContext.closePath();
-    upperContext.fill("evenodd");
-  });
-
-  context.drawImage(upperCanvas, 0, 0);
 };
 
 function FormField({
@@ -140,10 +144,53 @@ function App() {
     "#0000ff",
     "#ff00ff",
   ]);
-
   const minDistance = 16;
-
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  const [, setHistory] = useReducer(
+    (
+      state: { history: ImageData[]; index: number },
+      action: "push" | "undo" | "redo" | "clear"
+    ) => {
+      const canvas = canvasRef.current;
+      if (!canvas) {
+        return state;
+      }
+      const context = canvas.getContext("2d")!;
+
+      const { history, index: _index } = Object.assign({}, state);
+      let index = _index;
+      switch (action) {
+        case "push":
+          history.splice(index);
+          history.push(context.getImageData(0, 0, canvas.width, canvas.height));
+          index++;
+          break;
+        case "undo":
+          if (index > 0) {
+            clearCanvas(canvas);
+            if (index > 1) {
+              context.putImageData(history[index - 2], 0, 0);
+            }
+            index--;
+          }
+          break;
+        case "redo":
+          if (index < history.length) {
+            clearCanvas(canvas);
+            context.putImageData(history[index], 0, 0);
+            index++;
+          }
+          break;
+        case "clear":
+          history.splice(0);
+          index = 0;
+          break;
+      }
+      return { history, index };
+    },
+    { history: [], index: 0 }
+  );
 
   const [selectedColorIndex, setSelectedColorIndex] = useState(-1);
 
@@ -171,10 +218,11 @@ function App() {
     const canvas = canvasRef.current;
     if (canvas) {
       clearCanvas(canvas);
+      // setHistory("push");
     }
-  }, [canvasRef]);
+  }, []);
 
-  const onSubmit = (form: HTMLFormElement) => {
+  const onSubmit = async (form: HTMLFormElement) => {
     const canvas = canvasRef.current;
     if (!canvas) {
       return;
@@ -234,18 +282,17 @@ function App() {
     } as PaintingOptions;
 
     setPending(true);
-    setTimeout(() => {
-      drawPainting(canvas, options);
-      setPending(false);
-      setPath([]);
-    }, 0);
+    await drawPainting(canvas, options);
+    setPending(false);
+    setPath([]);
+    setHistory("push");
   };
 
   return (
     <>
       <div className="absolute p-4 left-0 top-0 w-full h-full">
         <div className="w-full h-full">
-          <div className="inline-block w-1/4 align-top">
+          <div className="inline-block p-2 w-1/4 align-top">
             <form
               className="select-none"
               autoComplete="off"
@@ -316,7 +363,7 @@ function App() {
                     Remove
                   </span>
                 </div>
-                <div className="my-1 leading-none select-none">
+                <div className="my-1 leading-none">
                   {colors.map((color, i) => {
                     return (
                       <label key={i} className="contents">
@@ -346,35 +393,69 @@ function App() {
               <div className="mx-2 my-1">
                 <button
                   className="
-                    mx-1 my-1 py-0.5 w-20 rounded-md text-white
+                    mx-1 my-1 px-2 py-0.5 rounded-md text-white
                     bg-blue-500 hover:bg-blue-400 active:bg-blue-300
                     disabled:bg-blue-300 disabled:cursor-not-allowed
                   "
                   type="submit"
                   disabled={pending}
                 >
-                  {pending ? <>Drawing</> : <>Draw</>}
+                  Draw
                 </button>
                 <button
                   className="
-                    mx-1 my-1 py-0.5 w-20 rounded-md text-white
+                    mx-1 my-1 px-2 py-0.5 rounded-md text-white
+                    bg-amber-500 hover:bg-amber-400 active:bg-amber-300
+                    disabled:bg-red-300 disabled:cursor-not-allowed
+                  "
+                  type="button"
+                  disabled={pending}
+                  onClick={() => {
+                    setHistory("undo");
+                  }}
+                >
+                  Undo
+                </button>
+                <button
+                  className="
+                    mx-1 my-1 px-2 py-0.5 rounded-md text-white
+                    bg-amber-500 hover:bg-amber-400 active:bg-amber-300
+                    disabled:bg-green-300 disabled:cursor-not-allowed
+                  "
+                  type="button"
+                  disabled={pending}
+                  onClick={() => {
+                    setHistory("redo");
+                  }}
+                >
+                  Redo
+                </button>
+                <button
+                  className="
+                    mx-1 my-1 px-2 py-0.5 rounded-md text-white
                     bg-red-500 hover:bg-red-400 active:bg-red-300
                     disabled:bg-red-300 disabled:cursor-not-allowed
                   "
                   type="button"
                   disabled={pending}
                   onClick={() => {
+                    if (!confirm("Clear painting? This action cannot be restored.")) {
+                      return;
+                    }
                     const canvas = canvasRef.current;
                     if (canvas) {
                       clearCanvas(canvas);
+                      setHistory("clear");
                     }
                   }}
                 >
                   Clear
                 </button>
+              </div>
+              <div className="mx-2 my-1">
                 <button
                   className="
-                    mx-1 my-1 py-0.5 w-20 rounded-md text-white
+                    mx-1 my-1 px-4 py-0.5 rounded-md text-white
                     bg-green-500 hover:bg-green-400 active:bg-green-300
                     disabled:bg-green-300 disabled:cursor-not-allowed
                   "
@@ -383,6 +464,11 @@ function App() {
                   onClick={() => {
                     const canvas = canvasRef.current;
                     if (canvas) {
+                      const name = prompt("Enter filename:");
+                      if (!name) {
+                        return;
+                      }
+
                       const tempCanvas = document.createElement("canvas");
                       const tempContext = tempCanvas.getContext("2d")!;
                       tempCanvas.width = width;
@@ -392,17 +478,17 @@ function App() {
 
                       const link = document.createElement("a");
                       link.href = tempCanvas.toDataURL();
-                      link.download = `${Date.now()}.png`;
+                      link.download = name.endsWith(".png") ? name : `${name}.png`;
                       link.click();
                     }
                   }}
                 >
-                  Save
+                  Download
                 </button>
               </div>
             </form>
           </div>
-          <div className="inline-block w-3/4 align-top">
+          <div className="inline-block p-2 w-3/4 align-top">
             <div
               className="relative outline outline-black outline-2 bg-white"
               style={{ width, height, pointerEvents: (pending || undefined) && "none" }}
