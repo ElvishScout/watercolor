@@ -1,3 +1,13 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer utilities {
+  .spin-button-none {
+    -moz-appearance: textfield;
+  }
+  .spin-button-none::-webkit-outer-spin-button,
+  .spin-button-none::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+  }
+}
