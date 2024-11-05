@@ -135,16 +135,15 @@ export default function App() {
   }, [canvas]);
   const [, setHistory] = useReducer(
     (
-      state: { canvas: HTMLCanvasElement | null; history: ImageData[]; index: number },
+      state: { history: ImageData[]; index: number },
       action: "push" | "undo" | "redo" | "clear"
     ) => {
-      const { canvas, history, index: _index } = Object.assign({}, state);
       if (!canvas) {
         return state;
       }
-      const context = canvas.getContext("2d")!;
+      const { history, index: _index } = Object.assign({}, state);
       let index = _index;
-
+      const context = canvas.getContext("2d")!;
       switch (action) {
         case "push":
           history.splice(index);
@@ -172,9 +171,9 @@ export default function App() {
           index = 0;
           break;
       }
-      return { canvas, history, index };
+      return { history, index };
     },
-    { canvas, history: [], index: 0 }
+    { history: [], index: 0 }
   );
 
   const onSubmit = async (form: HTMLFormElement) => {
