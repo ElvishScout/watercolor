@@ -58,7 +58,7 @@ export default function App() {
       defaultValue: 2,
       min: 0,
       required: true,
-      before: "Preprocess Iterations",
+      before: "Preprocess iterations",
     },
     {
       name: "base-radius",
@@ -67,7 +67,7 @@ export default function App() {
       min: 0,
       step: "any",
       required: true,
-      before: "Base Radius",
+      before: "Base radius",
     },
     {
       name: "temperature",
@@ -86,7 +86,7 @@ export default function App() {
       min: 0,
       step: "any",
       required: true,
-      before: "Filter Radius",
+      before: "Filter radius",
     },
     {
       name: "filter-weight",
@@ -95,7 +95,7 @@ export default function App() {
       min: 0,
       step: "any",
       required: true,
-      before: "Filter Weight",
+      before: "Filter weight",
     },
   ];
   const [colors, setColors] = useState([
